@@ -1,5 +1,6 @@
 //! Manage BigQuery streaming API.
 use std::sync::Arc;
+use std::io::Write;
 
 use crate::auth::Authenticator;
 use crate::error::BQError;
@@ -9,6 +10,10 @@ use crate::model::table_data_insert_all_response::TableDataInsertAllResponse;
 use crate::model::table_data_list_response::TableDataListResponse;
 use crate::{process_response, urlencode, BIG_QUERY_V2_URL};
 use reqwest::Client;
+
+use flate2::write::GzEncoder;
+use flate2::Compression;
+use reqwest::header::{CONTENT_ENCODING, CONTENT_TYPE};
 
 /// A table data API handler.
 #[derive(Clone)]
@@ -56,11 +61,17 @@ impl TableDataApi {
 
         let access_token = self.auth.access_token().await?;
 
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(serde_json::to_string(&insert_request).unwrap().as_bytes())?;
+        let gzipped_data = encoder.finish()?;
+
         let request = self
             .client
             .post(req_url.as_str())
+            .header(CONTENT_ENCODING, "gzip") // Indicate that the content is gzipped
+            .header(CONTENT_TYPE, "application/octet-stream")
             .bearer_auth(access_token)
-            .json(&insert_request)
+            .body(gzipped_data)
             .build()?;
 
         let resp = self.client.execute(request).await?;
